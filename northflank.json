@@ -1,0 +1,37 @@
+{
+  "name": "telegram-video-downloader-bot",
+  "description": "A sophisticated Telegram bot for downloading videos from multiple social media platforms",
+  "image": {
+    "buildpack": "docker"
+  },
+  "buildConfiguration": {
+    "dockerfile": "Dockerfile"
+  },
+  "deployment": {
+    "instances": 1,
+    "external": false,
+    "internalPort": 8080
+  },
+  "runtimeEnvironment": {
+    "variables": [
+      {
+        "name": "BOT_TOKEN",
+        "value": "",
+        "secret": true
+      }
+    ]
+  },
+  "scaling": {
+    "horizontalPolicy": {
+      "minReplicas": 1,
+      "maxReplicas": 1
+    },
+    "verticalPolicy": {
+      "cpu": "0.1",
+      "memory": "512Mi"
+    }
+  },
+  "healthCheck": {
+    "enabled": false
+  }
+}
