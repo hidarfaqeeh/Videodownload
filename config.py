@@ -9,7 +9,7 @@ from typing import List
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 # File Size Limits (in bytes)
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB - Telegram's limit for bots
+MAX_FILE_SIZE = 500 * 1024 * 1024  # 50MB - Telegram's limit for bots
 
 # Supported Platforms
 SUPPORTED_PLATFORMS: List[str] = [
