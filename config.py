@@ -6,7 +6,7 @@ import os
 from typing import List
 
 # Bot Configuration
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7673414255:AAHwEGTXQG4ESNaNjM6H27ZJK5M8hnUMgfY")
 
 # File Size Limits (in bytes)
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 50MB - Telegram's limit for bots
