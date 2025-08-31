@@ -28,6 +28,21 @@ MAX_RETRIES = 3
 # Logging Configuration
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+# Cookies / Authentication Configuration
+# Enable cookie-based authentication fallback across all platforms
+COOKIES_ENABLED = os.getenv("COOKIES_ENABLED", "false").lower() == "true"
+
+# Provide cookies via one of the following (priority: file path > base64 > raw header)
+# 1) COOKIES_FILE_PATH: absolute path to a Netscape cookies.txt file
+COOKIES_FILE_PATH = os.getenv("COOKIES_FILE_PATH")
+# 2) COOKIES_B64: base64-encoded Netscape cookies.txt content; will be written to a temp file
+COOKIES_B64 = os.getenv("COOKIES_B64")
+# 3) COOKIES_RAW: raw Cookie header string, e.g. "name=value; name2=value2"
+COOKIES_RAW = os.getenv("COOKIES_RAW")
+
+# Apply cookies only if the first attempt fails (recommended). If false, always use cookies.
+COOKIES_APPLY_ON_FAILURE_ONLY = os.getenv("COOKIES_APPLY_ON_FAILURE_ONLY", "true").lower() == "true"
+
 # Video Quality Settings
 PREFERRED_FORMATS = [
     'best[height<=720][ext=mp4]',

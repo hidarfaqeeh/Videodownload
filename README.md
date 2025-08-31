@@ -25,6 +25,42 @@ cd telegram-video-downloader-bot
 قم بتعيين متغير البيئة التالي في Northflank:
 - `BOT_TOKEN`: رمز البوت من @BotFather على تليجرام
 
+#### (اختياري) المصادقة باستخدام الكوكيز في حال فشل التحميل أو تطلب تسجيل دخول
+فعّل استخدام الكوكيز لجميع المنصات عبر متغيرات البيئة التالية. يتم استخدام الكوكيز تلقائياً فقط عند فشل المحاولة الأولى أو طلب تسجيل الدخول (يمكن تعديل هذا السلوك):
+
+- `COOKIES_ENABLED` = `true` لتفعيل الميزة
+- اختر إحدى طرق تزويد الكوكيز (الأولوية: ملف > Base64 > قيمة نصية):
+  - `COOKIES_FILE_PATH` مسار ملف بصيغة Netscape cookies.txt داخل الحاوية (مثال: `/app/cookies.txt`)
+  - `COOKIES_B64` محتوى ملف cookies.txt مشفر Base64 (سيتم حفظه تلقائياً في `/tmp/ytdlp_cookies_env.txt`)
+  - `COOKIES_RAW` سلسلة ترويسة Cookie كاملة (مثال: `name=value; name2=value2`)
+- `COOKIES_APPLY_ON_FAILURE_ONLY` = `true` (افتراضي) لاستخدام الكوكيز فقط عند فشل المحاولة الأولى، أو `false` لاستخدامها دائماً
+
+أمثلة إعداد:
+
+```bash
+# استخدام ملف كوكيز جاهز داخل الحاوية
+COOKIES_ENABLED=true
+COOKIES_FILE_PATH=/app/cookies.txt
+COOKIES_APPLY_ON_FAILURE_ONLY=true
+```
+
+```bash
+# تمرير الكوكيز عبر Base64 (مثالي للنشر بدون ملفات إضافية)
+COOKIES_ENABLED=true
+COOKIES_B64=PASTE_BASE64_CONTENT_HERE
+```
+
+```bash
+# تمرير ترويسة Cookie مباشرة
+COOKIES_ENABLED=true
+COOKIES_RAW="name=value; name2=value2"
+```
+
+ملاحظات:
+- تنسيق الملف يجب أن يكون Netscape cookies.txt القياسي (كما يصدره المتصفح عبر إضافة cookies.txt أو عبر yt-dlp).
+- في منصات مثل Northflank/Heroku/Railway يمكنك ضبط هذه المتغيرات من لوحة التحكم.
+- لا تضع الكوكيز في المستودع. استخدم متغيرات البيئة فقط.
+
 ### 3. النشر التلقائي
 1. اربط مستودع GitHub/GitLab بـ Northflank
 2. اختر Dockerfile للبناء
