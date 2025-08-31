@@ -15,7 +15,8 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from telegram.constants import ChatAction
 from downloader import VideoDownloader
 from utils import is_valid_url, format_file_size, cleanup_temp_files
-from config import BOT_TOKEN, SUPPORTED_PLATFORMS, MAX_FILE_SIZE
+from config import BOT_TOKEN, SUPPORTED_PLATFORMS, MAX_FILE_SIZE, USE_PYROGRAM_UPLOAD, PYROGRAM_API_ID, PYROGRAM_API_HASH, PYROGRAM_WORKERS
+from uploader import PyrogramUploader
 from animated_responses import AnimatedResponses
 from stats import BotStats
 
@@ -34,6 +35,19 @@ class TelegramVideoBot:
         logger.info(f"Temporary directory created: {self.temp_dir}")
         # Developer chat ID - سيتم الحصول عليه تلقائياً عند أول رسالة
         self.developer_chat_id = None
+        # Optional Pyrogram uploader for large files
+        self.uploader = None
+        if USE_PYROGRAM_UPLOAD and PYROGRAM_API_ID and PYROGRAM_API_HASH:
+            try:
+                self.uploader = PyrogramUploader(
+                    bot_token=BOT_TOKEN,
+                    api_id=int(PYROGRAM_API_ID),
+                    api_hash=PYROGRAM_API_HASH,
+                    workers=PYROGRAM_WORKERS,
+                )
+                logger.info("Pyrogram uploader initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize Pyrogram uploader: {e}")
 
     async def forward_support_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE, message_text: str) -> None:
         """Log support message and confirm to user"""
@@ -784,18 +798,42 @@ class TelegramVideoBot:
                         except Exception as e:
                             logger.info(f"Could not download thumbnail: {e}")
                     
-                    with open(file_path, 'rb') as video_file:
-                        await context.bot.send_video(
-                            chat_id=query.message.chat.id,
-                            video=video_file,
-                            thumbnail=thumbnail_file,
-                            caption=caption,
-                            supports_streaming=True,
-                            duration=duration,
-                            width=width,
-                            height=height,
-                            parse_mode='Markdown'
-                        )
+                    if self.uploader:
+                        try:
+                            await self.uploader.send_video(
+                                chat_id=query.message.chat.id,
+                                file_path=file_path,
+                                caption=caption,
+                                duration=duration,
+                                width=width,
+                                height=height,
+                                parse_mode='Markdown',
+                            )
+                        except Exception as e:
+                            logger.warning(f"Pyrogram send_video failed, falling back to Bot API: {e}")
+                            with open(file_path, 'rb') as video_file:
+                                await context.bot.send_video(
+                                    chat_id=query.message.chat.id,
+                                    video=video_file,
+                                    caption=caption,
+                                    supports_streaming=True,
+                                    duration=duration,
+                                    width=width,
+                                    height=height,
+                                    parse_mode='Markdown'
+                                )
+                    else:
+                        with open(file_path, 'rb') as video_file:
+                            await context.bot.send_video(
+                                chat_id=query.message.chat.id,
+                                video=video_file,
+                                caption=caption,
+                                supports_streaming=True,
+                                duration=duration,
+                                width=width,
+                                height=height,
+                                parse_mode='Markdown'
+                            )
                     await query.message.delete()
                     os.remove(file_path)
                     
@@ -1102,8 +1140,16 @@ class TelegramVideoBot:
 
     def run(self):
         """Run the bot"""
-        # Create application
-        application = Application.builder().token(BOT_TOKEN).build()
+        # Create application with post init/shutdown to manage Pyrogram client
+        async def _post_init(app: Application):
+            if self.uploader:
+                await self.uploader.start()
+
+        async def _post_shutdown(app: Application):
+            if self.uploader:
+                await self.uploader.stop()
+
+        application = Application.builder().token(BOT_TOKEN).post_init(_post_init).post_shutdown(_post_shutdown).build()
         
         # Add handlers
         application.add_handler(CommandHandler("start", self.start_command))

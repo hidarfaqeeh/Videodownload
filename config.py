@@ -8,8 +8,16 @@ from typing import List
 # Bot Configuration
 BOT_TOKEN = os.getenv("BOT_TOKEN", "7673414255:AAHwEGTXQG4ESNaNjM6H27ZJK5M8hnUMgfY")
 
+# Pyrogram (for large uploads)
+USE_PYROGRAM_UPLOAD = os.getenv("USE_PYROGRAM_UPLOAD", "false").lower() == "true"
+PYROGRAM_API_ID = os.getenv("PYROGRAM_API_ID")
+PYROGRAM_API_HASH = os.getenv("PYROGRAM_API_HASH")
+PYROGRAM_WORKERS = int(os.getenv("PYROGRAM_WORKERS", "8"))
+
 # File Size Limits (in bytes)
-MAX_FILE_SIZE = 500 * 1024 * 1024  # 50MB - Telegram's limit for bots
+# If using Pyrogram uploads, allow up to ~1.9GB by default; otherwise default to 50MB
+DEFAULT_MAX_MB = 1900 if USE_PYROGRAM_UPLOAD else 50
+MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", str(DEFAULT_MAX_MB))) * 1024 * 1024
 
 # Supported Platforms
 SUPPORTED_PLATFORMS: List[str] = [
@@ -27,6 +35,11 @@ MAX_RETRIES = 3
 
 # Logging Configuration
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+# yt-dlp concurrency tuning
+YTDLP_CONCURRENT_FRAGMENTS = int(os.getenv("YTDLP_CONCURRENT_FRAGMENTS", "4"))
+YTDLP_BUFFERSIZE = int(os.getenv("YTDLP_BUFFERSIZE", "1048576"))  # 1 MiB
+YTDLP_HTTP_CHUNK_SIZE = os.getenv("YTDLP_HTTP_CHUNK_SIZE")  # e.g. "10M" or empty
+
 
 # Cookies / Authentication Configuration
 # Enable cookie-based authentication fallback across all platforms
