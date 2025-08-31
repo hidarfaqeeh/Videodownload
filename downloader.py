@@ -6,6 +6,7 @@ import os
 import asyncio
 import yt_dlp
 import logging
+import base64
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -37,17 +38,94 @@ class VideoDownloader:
             'ignoreerrors': True,
             'socket_timeout': 30,
         }
+
+        # Load cookies configuration from environment via config
+        from config import (
+            COOKIES_ENABLED,
+            COOKIES_FILE_PATH,
+            COOKIES_B64,
+            COOKIES_RAW,
+            COOKIES_APPLY_ON_FAILURE_ONLY,
+        )
+
+        self.cookies_enabled = COOKIES_ENABLED
+        self.cookies_apply_on_failure_only = COOKIES_APPLY_ON_FAILURE_ONLY
+        self.cookies_mode = 'none'  # 'file' | 'raw' | 'none'
+        self.cookies_file_path: Optional[str] = None
+        self.cookies_raw: Optional[str] = None
+
+        if self.cookies_enabled:
+            try:
+                if COOKIES_FILE_PATH and os.path.exists(COOKIES_FILE_PATH):
+                    self.cookies_mode = 'file'
+                    self.cookies_file_path = COOKIES_FILE_PATH
+                    logger.info("Cookies enabled: using COOKIES_FILE_PATH")
+                elif COOKIES_B64:
+                    decoded = base64.b64decode(COOKIES_B64)
+                    temp_path = os.path.join('/tmp', 'ytdlp_cookies_env.txt')
+                    with open(temp_path, 'wb') as f:
+                        f.write(decoded)
+                    try:
+                        os.chmod(temp_path, 0o600)
+                    except Exception:
+                        pass
+                    self.cookies_mode = 'file'
+                    self.cookies_file_path = temp_path
+                    logger.info("Cookies enabled: using COOKIES_B64 written to temp file")
+                elif COOKIES_RAW:
+                    self.cookies_mode = 'raw'
+                    self.cookies_raw = COOKIES_RAW
+                    logger.info("Cookies enabled: using COOKIES_RAW header")
+                else:
+                    logger.info("Cookies enabled but no source provided (FILE/B64/RAW).")
+            except Exception as e:
+                logger.error(f"Failed to initialize cookies from env: {e}")
+
+        # If cookies should always apply, merge into default opts now
+        if self.cookies_enabled and not self.cookies_apply_on_failure_only:
+            self.ydl_opts = self._merge_cookie_opts(self.ydl_opts)
+            self.playlist_opts = self._merge_cookie_opts(self.playlist_opts)
+
+    def _merge_cookie_opts(self, opts: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge cookie configuration into yt-dlp options if configured."""
+        if not self.cookies_enabled:
+            return opts
+        merged = opts.copy()
+        if self.cookies_mode == 'file' and self.cookies_file_path:
+            merged['cookiefile'] = self.cookies_file_path
+        elif self.cookies_mode == 'raw' and self.cookies_raw:
+            headers = merged.get('http_headers', {}).copy()
+            headers['Cookie'] = self.cookies_raw
+            merged['http_headers'] = headers
+        return merged
+
+    def _build_opts(self, base_opts: Dict[str, Any], overrides: Optional[Dict[str, Any]] = None, use_cookies: bool = False) -> Dict[str, Any]:
+        opts = base_opts.copy()
+        if overrides:
+            opts.update(overrides)
+        if use_cookies:
+            opts = self._merge_cookie_opts(opts)
+        return opts
     
     async def get_video_info(self, url: str) -> Optional[Dict[str, Any]]:
         """Get video information without downloading"""
         try:
             loop = asyncio.get_event_loop()
             
-            def _get_info():
-                with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
+            def _get_info(opts: Dict[str, Any]):
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     return ydl.extract_info(url, download=False)
             
-            info = await loop.run_in_executor(None, _get_info)
+            info = None
+            try:
+                info = await loop.run_in_executor(None, _get_info, self.ydl_opts)
+            except Exception as e:
+                if self.cookies_enabled and self.cookies_apply_on_failure_only:
+                    cookie_opts = self._build_opts(self.ydl_opts, use_cookies=True)
+                    logger.warning(f"Info fetch failed, retrying with cookies: {e}")
+                    info = await loop.run_in_executor(None, _get_info, cookie_opts)
+                else:
+                    raise
             
             if info:
                 logger.info(f"Got video info for: {info.get('title', 'Unknown')}")
@@ -73,11 +151,20 @@ class VideoDownloader:
         try:
             loop = asyncio.get_event_loop()
             
-            def _get_formats():
-                with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
+            def _get_formats(opts: Dict[str, Any]):
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     return ydl.extract_info(url, download=False)
             
-            info = await loop.run_in_executor(None, _get_formats)
+            info = None
+            try:
+                info = await loop.run_in_executor(None, _get_formats, self.ydl_opts)
+            except Exception as e:
+                if self.cookies_enabled and self.cookies_apply_on_failure_only:
+                    cookie_opts = self._build_opts(self.ydl_opts, use_cookies=True)
+                    logger.warning(f"Format fetch failed, retrying with cookies: {e}")
+                    info = await loop.run_in_executor(None, _get_formats, cookie_opts)
+                else:
+                    raise
             
             if info:
                 video_formats = []
@@ -123,23 +210,25 @@ class VideoDownloader:
         try:
             os.makedirs(output_dir, exist_ok=True)
             
-            download_opts = self.ydl_opts.copy()
-            download_opts['format'] = format_id
-            # Use a simple template first, we'll rename after getting info
-            download_opts['outtmpl'] = os.path.join(output_dir, 'temp_video.%(ext)s')
+            overrides = {
+                'format': format_id,
+                'outtmpl': os.path.join(output_dir, 'temp_video.%(ext)s'),
+            }
+            download_opts = self._build_opts(self.ydl_opts, overrides=overrides, use_cookies=(self.cookies_enabled and not self.cookies_apply_on_failure_only))
             
             loop = asyncio.get_event_loop()
             
-            def _download():
+            def _download(opts: Dict[str, Any]):
                 import time
                 import shutil
                 
                 # Create simple filename first
                 timestamp = int(time.time())
                 temp_name = f"video_{timestamp}"
-                download_opts['outtmpl'] = os.path.join(output_dir, f'{temp_name}.%(ext)s')
+                opts = opts.copy()
+                opts['outtmpl'] = os.path.join(output_dir, f'{temp_name}.%(ext)s')
                 
-                with yt_dlp.YoutubeDL(download_opts) as ydl:
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     ydl.download([url])
                     
                     # Find the downloaded file with our timestamp
@@ -149,7 +238,16 @@ class VideoDownloader:
                     
                     return None
             
-            result = await loop.run_in_executor(None, _download)
+            result = None
+            try:
+                result = await loop.run_in_executor(None, _download, download_opts)
+            except Exception as e:
+                if self.cookies_enabled and self.cookies_apply_on_failure_only:
+                    cookie_opts = self._build_opts(self.ydl_opts, overrides=overrides, use_cookies=True)
+                    logger.warning(f"Format download failed, retrying with cookies: {e}")
+                    result = await loop.run_in_executor(None, _download, cookie_opts)
+                else:
+                    raise
             return result
             
         except Exception as e:
@@ -161,7 +259,7 @@ class VideoDownloader:
         try:
             os.makedirs(output_dir, exist_ok=True)
             
-            download_opts = {
+            base_opts = {
                 'format': 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best' if quality == "best" else 'worstaudio/worst',
                 'outtmpl': os.path.join(output_dir, 'temp_audio.%(ext)s'),
                 'quiet': True,
@@ -175,18 +273,20 @@ class VideoDownloader:
                     '-ar', '44100'
                 ],
             }
+            download_opts = self._build_opts(base_opts, use_cookies=(self.cookies_enabled and not self.cookies_apply_on_failure_only))
             
             loop = asyncio.get_event_loop()
             
-            def _download():
+            def _download(opts: Dict[str, Any]):
                 import time
                 
                 # Create simple filename
                 timestamp = int(time.time())
                 temp_name = f"audio_{timestamp}"
-                download_opts['outtmpl'] = os.path.join(output_dir, f'{temp_name}.%(ext)s')
+                opts = opts.copy()
+                opts['outtmpl'] = os.path.join(output_dir, f'{temp_name}.%(ext)s')
                 
-                with yt_dlp.YoutubeDL(download_opts) as ydl:
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     ydl.download([url])
                     
                     # Find the downloaded MP3 file
@@ -196,7 +296,16 @@ class VideoDownloader:
                     
                     return None
             
-            result = await loop.run_in_executor(None, _download)
+            result = None
+            try:
+                result = await loop.run_in_executor(None, _download, download_opts)
+            except Exception as e:
+                if self.cookies_enabled and self.cookies_apply_on_failure_only:
+                    cookie_opts = self._build_opts(base_opts, use_cookies=True)
+                    logger.warning(f"Audio download failed, retrying with cookies: {e}")
+                    result = await loop.run_in_executor(None, _download, cookie_opts)
+                else:
+                    raise
             return result
             
         except Exception as e:
@@ -210,13 +319,15 @@ class VideoDownloader:
             os.makedirs(output_dir, exist_ok=True)
             
             # Update output template with directory
-            download_opts = self.ydl_opts.copy()
-            download_opts['outtmpl'] = os.path.join(output_dir, '%(title)s.%(ext)s')
+            overrides = {
+                'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s')
+            }
+            base_opts = self._build_opts(self.ydl_opts, overrides=overrides, use_cookies=(self.cookies_enabled and not self.cookies_apply_on_failure_only))
             
             loop = asyncio.get_event_loop()
             
-            def _download():
-                with yt_dlp.YoutubeDL(download_opts) as ydl:
+            def _download(opts: Dict[str, Any]):
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     # Get info first to determine filename
                     info = ydl.extract_info(url, download=False)
                     if not info:
@@ -230,7 +341,8 @@ class VideoDownloader:
                     # Set specific output path
                     filename = f"{title}.{ext}"
                     output_path = os.path.join(output_dir, filename)
-                    download_opts['outtmpl'] = output_path.replace('.mp4', '.%(ext)s')
+                    opts = opts.copy()
+                    opts['outtmpl'] = output_path.replace('.mp4', '.%(ext)s')
                     
                     # Download
                     ydl.download([url])
@@ -242,7 +354,16 @@ class VideoDownloader:
                     
                     return output_path if os.path.exists(output_path) else None
             
-            result = await loop.run_in_executor(None, _download)
+            result = None
+            try:
+                result = await loop.run_in_executor(None, _download, base_opts)
+            except Exception as e:
+                if self.cookies_enabled and self.cookies_apply_on_failure_only:
+                    cookie_opts = self._build_opts(self.ydl_opts, overrides=overrides, use_cookies=True)
+                    logger.warning(f"Video download failed, retrying with cookies: {e}")
+                    result = await loop.run_in_executor(None, _download, cookie_opts)
+                else:
+                    raise
             
             if result and os.path.exists(result):
                 logger.info(f"Successfully downloaded: {result}")
@@ -269,11 +390,20 @@ class VideoDownloader:
         try:
             loop = asyncio.get_event_loop()
             
-            def _get_playlist():
-                with yt_dlp.YoutubeDL(self.playlist_opts) as ydl:
+            def _get_playlist(opts: Dict[str, Any]):
+                with yt_dlp.YoutubeDL(opts) as ydl:
                     return ydl.extract_info(url, download=False)
             
-            info = await loop.run_in_executor(None, _get_playlist)
+            info = None
+            try:
+                info = await loop.run_in_executor(None, _get_playlist, self.playlist_opts)
+            except Exception as e:
+                if self.cookies_enabled and self.cookies_apply_on_failure_only:
+                    cookie_opts = self._build_opts(self.playlist_opts, use_cookies=True)
+                    logger.warning(f"Playlist info fetch failed, retrying with cookies: {e}")
+                    info = await loop.run_in_executor(None, _get_playlist, cookie_opts)
+                else:
+                    raise
             
             if info and 'entries' in info:
                 playlist_title = info.get('title', 'قائمة تشغيل')
