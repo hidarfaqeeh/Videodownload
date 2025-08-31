@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 class VideoDownloader:
     def __init__(self):
         # Configure yt-dlp options
+        from config import (
+            YTDLP_CONCURRENT_FRAGMENTS,
+            YTDLP_BUFFERSIZE,
+            YTDLP_HTTP_CHUNK_SIZE,
+        )
+
         self.ydl_opts = {
             'format': 'best[height<=720][ext=mp4]/best[ext=mp4]/best',
             'outtmpl': '%(title)s.%(ext)s',
@@ -28,7 +34,11 @@ class VideoDownloader:
             'ignoreerrors': False,
             'socket_timeout': 30,
             'retries': 3,
+            'concurrent_fragment_downloads': YTDLP_CONCURRENT_FRAGMENTS,
+            'buffersize': YTDLP_BUFFERSIZE,
         }
+        if YTDLP_HTTP_CHUNK_SIZE:
+            self.ydl_opts['http_chunk_size'] = YTDLP_HTTP_CHUNK_SIZE
         
         # Options for playlist extraction
         self.playlist_opts = {
